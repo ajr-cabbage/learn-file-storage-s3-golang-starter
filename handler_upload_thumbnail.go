@@ -1,10 +1,14 @@
 package main
 
 import (
-	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -36,7 +40,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	err = r.ParseMultipartForm(maxMemory)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Form parse failed", err)
+		respondWithError(w, http.StatusBadRequest, err.Error(), err)
 		return
 	}
 
@@ -45,11 +49,36 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadRequest, err.Error(), err)
 		return
 	}
-	mediaType := fileHeaders.Header.Get("Content-Type")
-	imgDat, err := io.ReadAll(file)
+	contentTypeHeader := fileHeaders.Header.Get("Content-Type")
+	mediaType, _, err := mime.ParseMediaType(contentTypeHeader)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error(), err)
 		return
+	}
+	if mediaType != "image/jpeg" && mediaType != "image/png" {
+		respondWithError(w, http.StatusBadRequest, "not an image file", errors.New("not an image file"))
+		return
+	}
+
+	contentTypeParts := strings.Split(mediaType, "/")
+	if len(contentTypeParts) < 2 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	fileExt := contentTypeParts[1]
+	fileName := fmt.Sprintf("%s.%s", videoIDString, fileExt)
+
+	destFilePath := filepath.Join(cfg.assetsRoot, fileName)
+	destFile, err := os.Create(destFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error(), err)
+		return
+	}
+	_, err = io.Copy(destFile, file)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error(), err)
+		return
+
 	}
 
 	video, err := cfg.db.GetVideo(videoID)
@@ -58,18 +87,20 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	dataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, base64.StdEncoding.EncodeToString(imgDat))
+	dataURL := fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, fileName)
 
 	video.ThumbnailURL = &dataURL
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, err.Error(), err)
+		return
 	}
 
 	updatedVideo, err := cfg.db.GetVideo(video.ID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, err.Error(), err)
+		return
 	}
 
 	respondWithJSON(w, http.StatusOK, updatedVideo)
