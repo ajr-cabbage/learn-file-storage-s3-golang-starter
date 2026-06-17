@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +51,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadRequest, err.Error(), err)
 		return
 	}
+	defer file.Close()
 	contentTypeHeader := fileHeaders.Header.Get("Content-Type")
 	mediaType, _, err := mime.ParseMediaType(contentTypeHeader)
 	if err != nil {
@@ -66,7 +69,9 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	fileExt := contentTypeParts[1]
-	fileName := fmt.Sprintf("%s.%s", videoIDString, fileExt)
+	randByte := make([]byte, 32)
+	rand.Read(randByte)
+	fileName := fmt.Sprintf("%s.%s", base64.RawURLEncoding.EncodeToString(randByte), fileExt)
 
 	destFilePath := filepath.Join(cfg.assetsRoot, fileName)
 	destFile, err := os.Create(destFilePath)
